@@ -17,10 +17,10 @@ async def check_url(session: ClientSession, url: str, max_retries=3):
     for attempt in range(1, max_retries + 1):
         start_time = asyncio.get_event_loop().time()
         try:
-            requests_url = url + "/translate"
-            async with session.post(requests_url, headers=headers, data=payload) as response:
+            async with session.post(url, headers=headers, data=payload) as response:
                 response_json = await response.json()
-                if response.status == 200 and response_json.get("data"):
+                # 优化判断逻辑
+                if response.status == 200 and 'data' in response_json and len(str(response_json.get("data"))) > 0:
                     latency = asyncio.get_event_loop().time() - start_time
                     return (url, latency)
         except Exception as e:
@@ -51,5 +51,21 @@ async def process_urls(file_path):
         for url, _ in valid_results:
             await file.write(url + '\n')
 
+def list_file(input_file, output_file):
+    """
+    将输入文件中的 URL 按行写入输出文件
+    :param input_file: 输入文件
+    :param output_file: 输出文件
+    """
+    with open(input_file, 'r') as input_file_content:
+        lines = input_file_content.readlines()
+
+    flattened_lines = ','.join(line.strip() for line in lines)
+
+    with open(output_file, 'w') as result_file:
+        result_file.write(flattened_lines)
+
+
 asyncio.run(process_urls('API.txt'))
+list_file('API.txt', 'success_result.txt')
 print("All done.")
