@@ -1,14 +1,11 @@
 import asyncio
 import json
 import aiofiles
-import time
 from aiohttp import ClientSession, ClientTimeout
-
-BUFFER_SIZE = 5
 
 async def check_url(session: ClientSession, url: str, max_retries=3):
     """
-    检查 URL 并返回响应的 JSON 和延迟，如果条件满足。
+    检查 URL 并翻译文本，如果满足条件则返回URL和响应时间。
     """
     payload = json.dumps({
         "text": "hello world",
@@ -16,58 +13,43 @@ async def check_url(session: ClientSession, url: str, max_retries=3):
         "target_lang": "ZH"
     })
     headers = {'Content-Type': 'application/json'}
-
+    
     for attempt in range(1, max_retries + 1):
-        start_time = time.time()  # 开始计时
+        start_time = asyncio.get_event_loop().time()
         try:
             requests_url = url + "/translate"
             async with session.post(requests_url, headers=headers, data=payload) as response:
                 response_json = await response.json()
                 if response.status == 200 and response_json.get("data"):
-                    # 如果"data"字段存在且为真值
-                    latency = time.time() - start_time  # 计算延迟
-                    return url, latency
+                    latency = asyncio.get_event_loop().time() - start_time
+                    return (url, latency)
         except Exception as e:
             print(f"Error for URL {url} (Attempt {attempt}/{max_retries}): {e}")
-            if attempt < max_retries:  # 延迟重试
+            if attempt < max_retries:
                 await asyncio.sleep(1)
+    
+    return (None, None)
 
-    return None, None  # 返回 None 表示失败
-
-async def process_urls(input_file, success_file):
+async def process_urls(file_path):
     """
-    处理输入的 URL 列表，收集有效的 URL 及其延迟，并按延迟排序后写入文件。
+    处理文件中的URL列表，验证每个URL，只保留有效的URL，并按延迟排序后覆盖写入原文件。
+    处理重复的URL，确保每个URL只被检查一次。
     """
-    unique_urls = set()
-    results = []
-
-    try:
-        async with aiofiles.open(success_file, 'r') as existing_file:
-            existing_urls = {line.strip() async for line in existing_file}
-        unique_urls.update(existing_urls)
-    except FileNotFoundError:
-        pass
-
-    async with aiofiles.open(input_file, 'r') as file:
-        urls = [line.strip() async for line in file]
-
     timeout = ClientTimeout(total=5)
+    async with aiofiles.open(file_path, 'r') as file:
+        urls = {line.strip() async for line in file}  # 使用集合去重
+    
     async with ClientSession(timeout=timeout) as session:
         tasks = [check_url(session, url) for url in urls]
-        for future in asyncio.as_completed(tasks):
-            url, latency = await future
-            if url and latency is not None:
-                results.append((url, latency))
+        results = await asyncio.gather(*tasks)
+    
+    # 移除无效结果，并按延迟排序
+    valid_results = sorted((url for url in results if url[0] is not None), key=lambda x: x[1])
+    
+    # 清空并更新文件
+    async with aiofiles.open(file_path, 'w') as file:
+        for url, _ in valid_results:
+            await file.write(url + '\n')
 
-    # 按延迟排序
-    sorted_results = sorted(results, key=lambda x: x[1])
-
-    # 分批写入文件
-    for i in range(0, len(sorted_results), BUFFER_SIZE):
-        buffer = sorted_results[i:i+BUFFER_SIZE]
-        urls_to_write = [url for url, _ in buffer]
-        async with aiofiles.open(success_file, 'a') as valid_file:
-            await valid_file.write('\n'.join(urls_to_write) + '\n')
-
-asyncio.run(process_urls('input.txt', 'success.txt'))
-print("all done")
+asyncio.run(process_urls('API.txt'))
+print("All done.")
